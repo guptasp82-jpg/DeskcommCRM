@@ -1967,12 +1967,19 @@ async function executarTurnoDoAgente(
   // Lido aqui, e não em cada ponto de uso: os dois consumidores ficam a ~900
   // linhas de distância um do outro, e duas queries para a mesma pergunta viram,
   // com o tempo, duas respostas.
-  const camadas = await lerCamadasDaOrg(pool, tenantId);
+  //
+  // INICIADO aqui, e não mais esperado em série: as duas promises voam sobre as
+  // checagens de handoff/elegibilidade logo abaixo e são colhidas nas duas
+  // primeiras trilhas do Promise.all da abertura, lá embaixo. Só é seguro
+  // começar sem `await` porque nenhum dos dois pode rejeitar — os dois capturam
+  // a própria falha e devolvem o padrão (`camadas-da-org.ts` e `fuso-da-org.ts`):
+  // promessa que não afunda não deixa rejeição pendurada até quem colha.
+  const camadasEmVoo = lerCamadasDaOrg(pool, tenantId);
   // O fuso da ORGANIZAÇÃO — o que o bloco `## Agora` usa lá embaixo, na montagem
   // da abertura. Lido aqui pela mesma razão da linha acima: uma query por turno,
   // longe do ponto de uso, para não virar duas respostas para a mesma pergunta.
   // Nunca lança e nunca vem vazio (ver `fuso-da-org.ts`).
-  const fusoDaOrg = await fusoDaOrganizacao(pool, tenantId, runLog);
+  const fusoEmVoo = fusoDaOrganizacao(pool, tenantId, runLog);
 
   // F4-06 (acceptance 2): lead em handoff humano → NO-OP no INÍCIO do turno, antes de
   // qualquer chamada de modelo/CRM. O bot silenciou (bot_silenced_until='infinity', cache
@@ -2384,17 +2391,22 @@ async function executarTurnoDoAgente(
   // Com agente publicado, o system_prompt DELE é a camada tenant (platform de
   // compliance continua à frente, sempre).
   //
-  // As leituras da abertura correm em QUATRO trilhas paralelas: nenhuma escreve,
+  // As leituras da abertura correm em SEIS trilhas paralelas: nenhuma escreve,
   // nenhuma está sob lock ou transação, e a única dependência entre elas — o
   // playbook precisa do contexto de prospecção — fica dentro da mesma trilha.
-  // Em série eram 8 RTTs ao Supabase remoto antes de o modelo começar; assim são
-  // 2 (a trilha mais funda). As 4 consultas em voo por turno são o formato das
-  // trilhas, não um encaixe no pool: com QUEUE_MAX_CONCURRENCY=8 turnos abrindo
-  // juntos, o pico chega a 32 leituras sobre 10 conexões (default do pg, knob
-  // DB_POOL_MAX). O pg enfileira e nenhuma destas leituras segura conexão, então
-  // o pior caso é espera de fila no pico, não erro nem deadlock.
-  const [playbook, [skills, currentInboundText], orgMemory, [previous, leadState]] =
+  // As duas primeiras trilhas são as camadas e o fuso já iniciados lá em cima:
+  // promessa pronta é colhida de graça, e a que ainda estiver em voo termina
+  // junto com as demais. Em série eram 8 RTTs ao Supabase remoto antes de o
+  // modelo começar; assim são 2 (a trilha mais funda). As 6 consultas em voo por
+  // turno são o formato das trilhas, não um encaixe no pool: com
+  // QUEUE_MAX_CONCURRENCY=8 turnos abrindo juntos, o pico chega a 48 leituras
+  // sobre 10 conexões (default do pg, knob DB_POOL_MAX). O pg enfileira e
+  // nenhuma destas leituras segura conexão, então o pior caso é espera de fila
+  // no pico, não erro nem deadlock.
+  const [camadas, fusoDaOrg, playbook, [skills, currentInboundText], orgMemory, [previous, leadState]] =
     await Promise.all([
+      camadasEmVoo,
+      fusoEmVoo,
       (async () => {
         const prospectingContext =
           !preview && input.conversationId
