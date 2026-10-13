@@ -1056,7 +1056,7 @@ export async function sendMessageHandler(
         // banco — não a cópia da entrada — porque esta função corre em dois
         // momentos do fim do caminho: chamada logo antes de `adapter.send` e de
         // novo como `beforeSend` dentro do adapter, UMA LINHA antes da chamada
-        // HTTP ao canal (lib/channels/adapters/waha.ts). É o fim da corrida de
+        // HTTP ao canal (adapter sob lib/channels/adapters/). É o fim da corrida de
         // takeover humano: qualquer `pause-ai`/claim/resposta que pousar entre a
         // geração do modelo e o disparo é vista aqui, com o lock de
         // serialização do envio (before-send) ainda retido, e derruba o envio
