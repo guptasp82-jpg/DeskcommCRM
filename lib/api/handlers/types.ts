@@ -78,6 +78,15 @@ export interface HandlerCtx {
   approvedReply?: ApprovedReplyContext;
   meetingBooking?: MeetingBookingContext;
   internalMessageId?: string;
+  /**
+   * Veto de takeover humano na porta de saída: ligado só pelos pontos de envio
+   * de TURNO da IA (inbound/followup), o handler relê
+   * `conversations.bot_silenced_until` fresco — na entrada da mensagem e como
+   * última checagem do `beforeSend` imediatamente antes do disparo — e recusa
+   * com `HumanTakeoverStaleError` (`human_takeover_stale`) se a conversa foi
+   * pausada/assumida por um humano depois que o turno começou.
+   */
+  enforceHumanTakeoverCheck?: boolean;
   proactiveContext?: ProactiveContext;
   /** Trusted origin captured by the runtime, never request-body metadata. */
   serviceBoundary?: ServiceBoundary | null;

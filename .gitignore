@@ -20,6 +20,7 @@ build/
 !.env.example
 !.env.hostgator.example
 !.env.voip.example
+!.env.oracle.example
 
 # Asterisk — credenciais reais do trunk SIP/ARI (módulo VoIP, migration 0231),
 # nunca comitar. Templates ficam em asterisk/*.conf.example.

@@ -9,7 +9,8 @@ import {
 import { assertMeetingDeliverySupabase } from "@/lib/agenda/meet-delivery";
 import { AgendaDeferredError } from "@/lib/agenda/protecao-followup";
 import { assertAgendaEffectSupabase, guardAgendaEffect } from "@/lib/agenda/efeito";
-import { mesmaFronteira, StaleServiceBoundaryError } from "@/lib/atendimento/fronteira";
+import { HumanTakeoverStaleError, mesmaFronteira, StaleServiceBoundaryError } from "@/lib/atendimento/fronteira";
+import { normalizarInstante, silenciadoAgora } from "@/lib/ai/elegibilidade/gate";
 import { assertServiceBoundarySupabase } from "@/lib/atendimento/origem";
 import {
   currentExecutionAgentOperation,
@@ -554,6 +555,32 @@ export async function sendMessageHandler(
     );
   }
 
+  // ─── Takeover humano: a janela que fecha entre o início do turno e o disparo ─
+  //
+  // Invariante: mensagem da IA NÃO sai se a conversa entrou em tomada humana /
+  // pausa (`bot_silenced_until`, o campo autoritativo escrito por telefone,
+  // `pause-ai`, claim, resposta manual e handoff) DEPOIS que o turno começou e
+  // ANTES de o envio sair do servidor. O gate de início de turno já barava
+  // silêncio vigente — este veto existe para a CORRIDA em que o silêncio nasce
+  // no meio do turno, enquanto o modelo gera.
+  //
+  // Liga só pelo flag `enforceHumanTakeoverCheck` (só os pontos de envio de
+  // turno o setam): avisos de passagem, entregas aprovadas/transacionais e
+  // chamadores MCP/REST seguem exatamente como antes. `normalizarInstante` +
+  // `silenciadoAgora` são a MESMA régua do gate de elegibilidade ('infinity' do
+  // Postgres inclusive) — pausa vigente veta; vencida ou ausente, não.
+  const vetaSeHumanoAssumiu = (bruto: string | null): void => {
+    if (!ctx.enforceHumanTakeoverCheck) return;
+    if (silenciadoAgora(normalizarInstante(bruto), new Date()))
+      throw new HumanTakeoverStaleError();
+  };
+
+  // Entrada: já relida da consulta da conversa, antes de nascer a linha da
+  // mensagem — o caso comum (silêncio gravado durante a geração) não deixa
+  // nem um resquício `queued` para trás. O reexame FRESCO no fim do caminho
+  // (última checagem de `checkBoundary`) cobre a corrida que sobra.
+  vetaSeHumanoAssumiu(c.bot_silenced_until);
+
   // ─── A janela de 24h, ANTES de qualquer linha nascer (#1614) ──────────────
   //
   // Em canal com hetero-restrição, texto livre só sai enquanto o cliente
@@ -1025,6 +1052,25 @@ export async function sendMessageHandler(
         if (ctx.approvedReply) await prepareApprovedReplySupabase(supabase, ctx.approvedReply);
         if (ctx.agentOperation && !operacaoJaConferida)
           await assertAgentOperationSupabase(supabase, ctx.agentOperation);
+        // Última palavra ANTES do disparo: relê o `bot_silenced_until` FRESCO do
+        // banco — não a cópia da entrada — porque esta função corre em dois
+        // momentos do fim do caminho: chamada logo antes de `adapter.send` e de
+        // novo como `beforeSend` dentro do adapter, UMA LINHA antes da chamada
+        // HTTP ao canal (lib/channels/adapters/waha.ts). É o fim da corrida de
+        // takeover humano: qualquer `pause-ai`/claim/resposta que pousar entre a
+        // geração do modelo e o disparo é vista aqui, com o lock de
+        // serialização do envio (before-send) ainda retido, e derruba o envio
+        // com `human_takeover_stale` — erro de fronteira vencida, terminal.
+        if (ctx.enforceHumanTakeoverCheck) {
+          const { data: convFresca, error: erroFresco } = await supabase
+            .from("conversations")
+            .select("bot_silenced_until")
+            .eq("id", input.conversation_id)
+            .eq("organization_id", ctx.organization_id)
+            .maybeSingle();
+          if (erroFresco) throw erroFresco;
+          vetaSeHumanoAssumiu(convFresca?.bot_silenced_until ?? null);
+        }
       };
       // O que separa mídia de texto é a presença de `media` no envelope — o
       // adapter preserva o mesmo branch (e a mesma mensagem de erro de cada

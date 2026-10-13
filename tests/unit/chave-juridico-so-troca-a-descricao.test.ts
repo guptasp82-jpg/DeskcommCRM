@@ -49,11 +49,11 @@ function ferramentas(description: string): Record<string, unknown> {
 const DESCRICAO_LIGADA = AGENT_TOOL_DEFS.request_human_handoff.description as string;
 
 describe("caso 1 — chave ligada: a descrição fica igual à de hoje", () => {
-  it("byte a byte com o texto que já existia (contém 'questão jurídica/financeira sensível')", () => {
+  it("byte a byte com o texto que já existia (contém 'sensitive legal/financial issue')", () => {
     const tools = ferramentas(DESCRICAO_LIGADA);
     aplicaAChaveDeAssuntoJuridico(tools, true);
     expect(tools.request_human_handoff).toMatchObject({ description: DESCRICAO_LIGADA });
-    expect(DESCRICAO_LIGADA).toContain("questão jurídica/financeira sensível");
+    expect(DESCRICAO_LIGADA).toContain("sensitive legal/financial issue");
   });
 
   it("a descrição estática do módulo é a da função do lado ligado (uma fonte só)", () => {
@@ -68,24 +68,24 @@ describe("caso 1 — chave ligada: a descrição fica igual à de hoje", () => {
 });
 
 describe("caso 2 — chave desligada: sem 'jurídica' e com a frase nova", () => {
-  it("tira a passagem por 'questão jurídica' e diz que assunto jurídico é o trabalho normal", () => {
+  it("removes the pass-by for 'legal' and says legal matters are the normal work of this support", () => {
     const tools = ferramentas(DESCRICAO_LIGADA);
     aplicaAChaveDeAssuntoJuridico(tools, false);
     const depois = (tools.request_human_handoff as { description: string }).description;
 
     expect(depois, "a descrição desligada ainda manda passar por questão jurídica").not.toContain(
-      "jurídica",
+      "sensitive legal/financial issue",
     );
     expect(depois).toContain(
-      "assunto jurídico é o trabalho normal deste atendimento e não é, sozinho, motivo para passar a conversa",
+      "legal matters are the normal work of this support and are not, by themselves, a reason to pass the conversation",
     );
     // O resto da instrução continua: reclamação séria, financeira sensível,
     // pedido da pessoa e limite. O desenho tira SÓ o jurídico.
-    expect(depois).toContain("reclamação séria");
+    expect(depois).toContain("serious complaint");
     expect(depois, "a descrição desligada perdeu a passagem por questão financeira").toContain(
-      "questão financeira sensível",
+      "sensitive financial issue",
     );
-    expect(depois).toContain("o limite do que pode resolver");
+    expect(depois).toContain("the limit of what you can resolve");
   });
 
   it("troca SÓ a descrição: execute e as demais ferramentas ficam intactos", () => {

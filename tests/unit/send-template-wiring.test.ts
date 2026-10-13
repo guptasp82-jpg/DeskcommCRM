@@ -172,7 +172,7 @@ describe("send_template — a definição que o modelo lê", () => {
     // dinheiro e é pior UX) ou nunca manda fora dela.
     const d = AGENT_TOOL_DEFS.send_template.description;
     expect(d).toMatch(/send_message/);
-    expect(d).toMatch(/24 horas/);
+    expect(d).toMatch(/24 hours/);
   });
 });
 

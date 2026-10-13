@@ -48,6 +48,12 @@ export class SendToolError extends Error {
 export interface SendMessageInput {
   agentOperation?: AgentOperationContext;
   jobClaim?: JobClaim;
+  /**
+   * Espelha `ChannelSendInput.enforceHumanTakeoverCheck`: liga o veto de
+   * takeover humano na porta de saída do handler (leitura fresca de
+   * `bot_silenced_until` na entrada e no `beforeSend` do disparo).
+   */
+  enforceHumanTakeoverCheck?: boolean;
   tenantId: string;
   leadId: string | null;
   jobId: string;
@@ -185,6 +191,7 @@ export async function sendTurnMessage(
           approvedReply,
           agentOperation: input.agentOperation,
           internalMessageId: messageId,
+          enforceHumanTakeoverCheck: input.enforceHumanTakeoverCheck,
         },
         corpoDoEnvio(input, idempotencyKey),
       );

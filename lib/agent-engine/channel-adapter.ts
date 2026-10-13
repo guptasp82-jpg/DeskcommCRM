@@ -18,6 +18,18 @@ import type { JobClaim } from './queue/claim';
 export interface ChannelSendInput {
   agentOperation?: AgentOperationContext;
   jobClaim?: JobClaim;
+  /**
+   * Este envio é a RESPOSTA de um turno da IA e está sujeito ao veto de
+   * takeover humano: o handler relê `conversations.bot_silenced_until` na
+   * porta de saída (entrada E imediatamente antes do disparo) e recusa com
+   * `human_takeover_stale` se um humano assumir/pausar a conversa entre o
+   * início do turno e o envio.
+   *
+   * Presente só nos pontos de envio do turno (inbound/followup). Avisos de
+   * passagem, entregas aprovadas/transacionais, campanhas, automação e
+   * chamadores MCP/REST não o setam — o comportamento desses caminhos não muda.
+   */
+  enforceHumanTakeoverCheck?: boolean;
   tenantId: string;
   leadId: string | null;
   jobId: string;

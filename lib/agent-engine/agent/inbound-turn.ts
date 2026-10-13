@@ -210,6 +210,8 @@ import {
 } from '@/lib/escalacao/briefing-da-passagem';
 import { diffCheckpoint } from '@/lib/leads/checkpoint-diff';
 import { CORRECAO_DO_TURNO_MUDO, turnoMudoPedeCorrecao } from './turno-mudo';
+import { encontraDuplicado } from './near-dup';
+import { corposEnviadosDesdeUltimaInbound } from './memoria-envio';
 import { emitAgentActivityForContact } from '@/lib/leads/agent-activity';
 import { resolveActiveLeadForContact, type LeadCandidate } from '@/lib/leads/active-lead';
 import { aplicaDestinoDaIntencao } from './destino-da-intencao';
@@ -262,20 +264,20 @@ import {
  */
 export function descricaoDaFerramentaDePassagem(handoffLegalEnabled: boolean): string {
   return (
-    'Passa a conversa para um ATENDENTE HUMANO imediatamente. Use quando o lead pedir para falar com ' +
-    'uma pessoa, quando a situação exigir alguém humano ' +
+    'Passes the conversation to a HUMAN AGENT immediately. Use when the lead asks to talk to ' +
+    'a person, when the situation requires a human ' +
     (handoffLegalEnabled
-      ? '(reclamação séria, questão jurídica/financeira sensível) '
-      : '(reclamação séria, questão financeira sensível; assunto jurídico é o trabalho normal ' +
-        'deste atendimento e não é, sozinho, motivo para passar a conversa) ') +
-    'ou quando você atingir o limite do que pode resolver. ' +
-    'AVISE O LEAD ANTES: mande uma mensagem dizendo que você vai chamar alguém da equipe e SÓ ENTÃO ' +
-    'chame esta ferramenta — depois dela você não consegue mais falar com ele. Se você não avisar, ' +
-    'o sistema manda um aviso padrão no seu lugar. Acionada a ferramenta, encerre o turno. ' +
-    'NUNCA diga ao lead que "já chamei alguém" ou "já passei para a equipe" sem ter chamado esta ' +
-    'ferramenta NO MESMO turno — a frase no passado não substitui a ação, e ninguém é avisado de ' +
-    'verdade. Preencha por_que, o_que_tentei e cliente_quer — quem assumir só vê o que você escrever ' +
-    'aqui.'
+      ? '(serious complaint, sensitive legal/financial issue) '
+      : '(serious complaint, sensitive financial issue; legal matters are the normal work ' +
+        'of this support and are not, by themselves, a reason to pass the conversation) ') +
+    'or when you reach the limit of what you can resolve. ' +
+    'WARN THE LEAD FIRST: send a message saying that you will call someone from the team and ONLY THEN ' +
+    'call this tool — after it you can no longer talk to them. If you do not warn them, ' +
+    'the system sends a standard notice in your place. Once the tool is triggered, end the turn. ' +
+    'NEVER tell the lead "I already called someone" or "I already passed it to the team" without having called this ' +
+    'tool IN THE SAME TURN — the past-tense sentence does not replace the action, and nobody is actually ' +
+    'warned. Fill in por_que, o_que_tentei and cliente_quer — whoever takes over only sees what you write ' +
+    'here.'
   );
 }
 
@@ -318,113 +320,113 @@ export function aplicaAChaveDeAssuntoJuridico(
 export const AGENT_TOOL_DEFS = {
   get_lead_context: {
     description:
-      'Relê o contexto curado do lead nesta organização: dados do contato e as últimas mensagens da conversa.',
+      'Re-reads the curated context of the lead in this organization: contact details and the latest messages of the conversation.',
     inputSchema: z.object({}),
   },
   send_message: {
     description:
-      'Envia UMA mensagem de WhatsApp ao lead desta conversa. É o ÚNICO jeito de falar com o lead; texto fora desta tool nunca é enviado.',
+      'Sends ONE WhatsApp message to the lead of this conversation. It is the ONLY way to talk to the lead; text outside this tool is never sent.',
     inputSchema: z.object({
-      body: z.string().min(1).describe('corpo da mensagem, em pt-br, pronto para envio'),
+      body: z.string().min(1).describe('message body, in the same language used by the patient; if the language cannot be determined safely, use Brazilian Portuguese, ready to send'),
       produto_codigo: z
         .string()
         .optional()
         .describe(
-          'código de um produto do catálogo (o `codigo` de crm_search_products) que tem `fotos`: ' +
-            'as fotos dele vão junto, e o texto vira a legenda da primeira',
+          'code of a product from the catalog (the `codigo` of crm_search_products) that has `fotos`: ' +
+            'its photos go along with it, and the text becomes the caption of the first one',
         ),
     }),
   },
   update_lead_state: {
     description:
-      'Marca um avanço REAL no funil deste lead: stage (new → contacted → qualifying → qualified → ' +
-      'negotiating → won | lost; só o PRÓXIMO estágio válido — regressão é rejeitada), qualification ' +
-      '(budget/authority/need/timeline), next_action e reason (evidência curta do avanço). ' +
-      'Nunca invente avanço sem evidência na conversa.',
+      'Records a REAL advance in the funnel of this lead: stage (new → contacted → qualifying → qualified → ' +
+      'negotiating → won | lost; only the NEXT valid stage — regression is rejected), qualification ' +
+      '(budget/authority/need/timeline), next_action and reason (short evidence of the advance). ' +
+      'Never invent an advance without evidence in the conversation.',
     // Schema LARGO só para o SDK (o modelo vê os campos); a validação REAL é a
     // whitelist .strict() dentro de applyLeadStateUpdate — campo extra/forjado
     // vira erro de ENSINO ao modelo, nunca exceção do SDK nem strip silencioso.
     inputSchema: z
       .object({
-        stage: z.string().optional().describe('novo estágio do funil (só o próximo válido)'),
+        stage: z.string().optional().describe('new stage of the funnel (only the next valid one)'),
         qualification: z
           .object({})
           .passthrough()
           .optional()
-          .describe('qualificação: budget, authority, need, timeline'),
+          .describe('qualification: budget, authority, need, timeline'),
         next_action: z
           .string()
           .nullable()
           .optional()
-          .describe('próxima ação concreta combinada com o lead'),
-        reason: z.string().optional().describe('evidência curta do avanço (vai ao audit do CRM)'),
+          .describe('next concrete action agreed with the lead'),
+        reason: z.string().optional().describe('short evidence of the advance (goes to the CRM audit)'),
       })
       .passthrough(),
   },
   schedule_followup: {
     description:
-      'Agenda o SEU próprio retorno a este lead num momento futuro (follow-up). Use sempre que ' +
-      'prometer voltar a falar depois (ex.: "te retorno amanhã de manhã", "confirmo na segunda"). ' +
-      'Um agendamento por promessa; o sistema fará o follow-up sozinho no horário combinado — ' +
-      'depois de agendar, encerre o turno.',
+      'Schedules YOUR OWN return to this lead at a future moment (follow-up). Always use it when you ' +
+      'promise to come back and talk later (e.g. "I\'ll get back to you tomorrow morning", "I\'ll confirm on Monday"). ' +
+      'One schedule per promise; the system will do the follow-up on its own at the agreed time — ' +
+      'after scheduling, end the turn.',
     // Schema LARGO para o SDK (o modelo vê os campos); a validação REAL é a whitelist
     // .strict() + guard de prototype pollution dentro de applyScheduleFollowup — campo
     // extra/forjado e data inválida viram erro de ENSINO ao modelo, nunca exceção do SDK.
     inputSchema: z
       .object({
-        reason: z.string().describe('por que agendar o retorno'),
+        reason: z.string().describe('why schedule the return'),
         promised_at: z
           .string()
-          .describe('data/hora ISO 8601 do retorno (no futuro), ex.: "2026-07-15T14:00:00Z"'),
-        promise: z.string().describe('o que você prometeu ao lead'),
+          .describe('ISO 8601 date/time of the return (in the future), e.g.: "2026-07-15T14:00:00Z"'),
+        promise: z.string().describe('what you promised the lead'),
         context_snapshot: z
           .string()
           .nullable()
           .optional()
-          .describe('contexto curto para o seu run futuro'),
+          .describe('short context for your future run'),
       })
       .passthrough(),
   },
   save_lead_note: {
     description:
-      'Salva uma nota DURÁVEL na memória deste lead (persiste entre conversas). Use para fatos que ' +
-      'você vai querer lembrar depois: preferências, contexto pessoal, restrições, o que já foi ' +
-      'oferecido. A headline (linha curta) entra sempre no índice de memória do lead; o corpo completo ' +
-      'fica guardado e você o relê sob demanda com get_lead_note. Para CONSOLIDAR notas antigas, ' +
-      'liste os ids delas em "supersedes" (você os vê no índice) — elas são removidas ao salvar a nova.',
+      'Saves a DURABLE note in the memory of this lead (persists between conversations). Use it for facts that ' +
+      'you will want to remember later: preferences, personal context, restrictions, what has already been ' +
+      'offered. The headline (short line) always goes into the memory index of the lead; the full body ' +
+      'is stored and you re-read it on demand with get_lead_note. To CONSOLIDATE old notes, ' +
+      'list their ids in "supersedes" (you see them in the index) — they are removed when the new one is saved.',
     // Schema LARGO para o SDK (o modelo vê os campos); a validação REAL é a whitelist
     // .strict() + guard de prototype pollution dentro de applySaveLeadNote — campo
     // extra/forjado vira erro de ENSINO ao modelo, nunca exceção do SDK nem strip silencioso.
     inputSchema: z
       .object({
-        headline: z.string().describe('linha curta do índice (sempre visível no prompt)'),
-        body: z.string().describe('corpo completo da nota (lido sob demanda por get_lead_note)'),
+        headline: z.string().describe('short line of the index (always visible in the prompt)'),
+        body: z.string().describe('full body of the note (read on demand by get_lead_note)'),
         supersedes: z
           .array(z.string())
           .optional()
-          .describe('ids de notas que esta substitui/consolida (vistos no índice de memória)'),
+          .describe('ids of the notes this one replaces/consolidates (seen in the memory index)'),
       })
       .passthrough(),
   },
   get_lead_note: {
     description:
-      'Lê o CORPO completo de UMA nota da memória deste lead pelo id (o id aparece no índice de memória, ' +
-      'entre colchetes). Use quando a headline no índice não bastar e você precisar do detalhe.',
+      'Reads the FULL BODY of ONE note in the memory of this lead by id (the id appears in the memory index, ' +
+      'in brackets). Use when the headline in the index is not enough and you need the detail.',
     inputSchema: z
       .object({
-        note_id: z.string().describe('id da nota (como aparece no índice, entre colchetes)'),
+        note_id: z.string().describe('id of the note (as it appears in the index, in brackets)'),
       })
       .passthrough(),
   },
   search_knowledge: {
     description:
-      'Busca na BASE DE CONHECIMENTO da organização (FAQ, políticas, catálogo) os trechos mais ' +
-      'relevantes para uma pergunta. Use ANTES de responder qualquer dúvida factual sobre produto, ' +
-      'preço, prazo, política ou funcionamento — responda com base nos trechos retornados e não ' +
-      'invente o que não encontrar. Sem resultados = diga que vai confirmar, nunca chute.',
+      'Searches the KNOWLEDGE BASE of the organization (FAQ, policies, catalog) for the most ' +
+      'relevant passages for a question. Use BEFORE answering any factual doubt about product, ' +
+      'price, deadline, policy or how something works — answer based on the returned passages and do ' +
+      'not invent what you cannot find. No results = say you will confirm, never guess.',
     inputSchema: z
       .object({
-        query: z.string().min(2).describe('a pergunta ou termos a buscar, em pt-br'),
+        query: z.string().min(2).describe('the question or search terms, in pt-br'),
       })
       .passthrough(),
   },
@@ -451,59 +453,59 @@ export const AGENT_TOOL_DEFS = {
           .string()
           .optional()
           .describe(
-            'em uma frase, por que você não consegue resolver e está passando para uma pessoa',
+            'in one sentence, why you cannot resolve it and are handing it over to a person',
           ),
         o_que_tentei: z
           .array(
             z.object({
               o_que: z
                 .string()
-                .describe('o que você tentou (ex.: "busquei na base a política de desconto")'),
-              desfecho: z.string().optional().describe('no que deu (ex.: "a política só vai até 10%")'),
+                .describe('what you tried (e.g. "I searched the knowledge base for the discount policy")'),
+              desfecho: z.string().optional().describe('how it turned out (e.g. "the policy only goes up to 10%")'),
             }),
           )
           .optional()
-          .describe('o que você já tentou, na ordem — evita que a pessoa refaça o mesmo caminho'),
+          .describe('what you already tried, in order — keeps the person from retracing the same path'),
         cliente_quer: z
           .string()
           .optional()
-          .describe('o que a pessoa está pedindo, nas palavras dela'),
-        reason: z.string().optional().describe('sinônimo antigo de por_que (ainda aceito)'),
+          .describe('what the person is asking for, in their own words'),
+        reason: z.string().optional().describe('older synonym of por_que (still accepted)'),
       })
       .passthrough(),
   },
   read_skill_reference: {
     description:
-      'Lê o conteúdo de UMA reference (arquivo de apoio) do pacote de uma skill situacional que já ' +
-      'CASOU neste turno. Use quando o corpo da skill ativa mencionar uma reference e você precisar do ' +
-      'detalhe completo dela. Só funciona para skills ativas AGORA — pedir skill não ativa ou caminho ' +
-      'fora do manifesto dela volta erro.',
+      'Reads the content of ONE reference (support file) from the package of a situational skill that already ' +
+      'MATCHED in this turn. Use when the body of the active skill mentions a reference and you need the ' +
+      'full detail of it. Only works for skills active RIGHT NOW — asking for an inactive skill or a path ' +
+      'outside its manifest returns an error.',
     inputSchema: z
       .object({
         skill_name: z
           .string()
           .min(1)
-          .describe('nome da skill ativa neste turno (como aparece no bloco de skills)'),
-        ref_path: z.string().min(1).describe('caminho da reference dentro do pacote da skill'),
+          .describe('name of the skill active in this turn (as it appears in the skills block)'),
+        ref_path: z.string().min(1).describe('path of the reference inside the skill package'),
       })
       .passthrough(),
   },
   open_human_case: {
     description:
-      'Abra um caso para um humano de retaguarda quando você NÃO conseguir resolver o pedido do lead ' +
-      'sozinho (liberar acesso, corrigir algo num sistema, uma decisão que exige uma pessoa). Você CONTINUA ' +
-      'conversando com o lead normalmente — não silencia. Use SEMPRE que for prometer ao lead que alguém vai ' +
-      'verificar/resolver: prometer sem abrir o caso é proibido. Isso vale mesmo quando você nomeia a ' +
-      'pessoa ("vou confirmar com o Fulano", "já registrei com a equipe") — nomear alguém não abre o caso; ' +
-      'só esta ferramenta abre. Chame-a NO MESMO turno em que fizer a promessa, nunca depois.',
+      'Opens a case for a back-office human when you CANNOT resolve the request of the lead ' +
+      'on your own (grant access, fix something in a system, a decision that requires a person). You CONTINUE ' +
+      'talking to the lead normally — you do not go silent. Use ALWAYS when you are about to promise the lead that someone will ' +
+      'check/resolve it: promising without opening the case is forbidden. This holds even when you name the ' +
+      'person ("I will confirm with so-and-so", "I already logged it with the team") — naming someone does not open the case; ' +
+      'only this tool opens it. Call it IN THE SAME TURN as the promise, never later.',
     // Schema LARGO para o SDK (o modelo vê os campos); a validação REAL é a whitelist
     // .strict() openHumanCaseInputSchema (human-cases.ts) — campo extra/forjado vira
     // erro de ENSINO ao modelo, nunca exceção do SDK nem strip silencioso.
     inputSchema: z
       .object({
-        title: z.string().describe('título curto, ex.: "Liberar acesso ao painel"'),
-        summary: z.string().describe('o que o lead precisa, em pt-br'),
-        blocker: z.string().describe('por que você não consegue resolver sozinho'),
+        title: z.string().describe('short title, e.g.: "Release access to the dashboard"'),
+        summary: z.string().describe('what the lead needs, in pt-br'),
+        blocker: z.string().describe('why you cannot resolve it on your own'),
         // O assunto serve para quem TRIA a fila separar antes de ler. O detalhe
         // continua no título e no resumo — este campo não os substitui, e por
         // isso a lista é curta: muitas opções produzem classificação
@@ -511,43 +513,43 @@ export const AGENT_TOOL_DEFS = {
         kind: z
           .enum(Object.keys(TIPOS_DE_CASO) as [string, ...string[]])
           .describe(
-            'do que o caso trata, para a equipe triar: ' +
+            'what the case is about, for the team to triage: ' +
               Object.entries(TIPOS_DE_CASO_PARA_A_IA)
                 .map(([k, o]) => `${k} (${o})`)
                 .join('; ') +
-              '. Na dúvida entre dois, escolha o que descreve o PEDIDO, não o obstáculo.',
+              '. When in doubt between two, choose the one that describes the REQUEST, not the obstacle.',
           ),
       })
       .passthrough(),
   },
   provide_case_update: {
     description:
-      'Quando um caso está esperando informação do cliente e você já colheu essa informação na conversa, ' +
-      'use esta tool para devolver a informação ao humano responsável. Não invente — só o que o lead disse.',
+      'When a case is waiting for information from the customer and you have already collected that information in the conversation, ' +
+      'use this tool to hand the information back to the responsible human. Do not invent — only what the lead said.',
     // Schema LARGO para o SDK; a validação REAL é a whitelist .strict()
     // provideCaseUpdateInputSchema (human-cases.ts).
     inputSchema: z
       .object({
-        case_id: z.string().describe('id do caso aberto'),
-        info: z.string().describe('a informação colhida do lead'),
+        case_id: z.string().describe('id of the open case'),
+        info: z.string().describe('the information collected from the lead'),
       })
       .passthrough(),
   },
   send_template: {
     description:
-      'Envia um TEMPLATE aprovado do WhatsApp. Use SOMENTE quando o send_message for recusado ' +
-      'porque a janela de 24 horas com o contato fechou — a mensagem de erro diz quando é o caso. ' +
-      'Você precisa do nome exato do template, do idioma e de um valor para CADA parâmetro. ' +
-      'Se faltar valor, a resposta diz quais e você pode chamar de novo; qualquer outro erro ' +
-      'significa que um humano precisa agir — encerre o turno sem insistir.',
+      'Sends an approved WhatsApp TEMPLATE. Use ONLY when send_message is refused ' +
+      'because the window of 24 hours with the contact has closed — the error message says when that is the case. ' +
+      'You need the exact name of the template, the language and a value for EACH parameter. ' +
+      'If a value is missing, the response tells you which and you can call again; any other error ' +
+      'means that a human needs to act — end the turn without insisting.',
     inputSchema: z
       .object({
-        template_name: z.string().min(1).describe('nome exato do template, como aprovado na Meta'),
-        language: z.string().min(2).describe('código do idioma, ex.: pt_BR'),
+        template_name: z.string().min(1).describe('exact name of the template, as approved on Meta'),
+        language: z.string().min(2).describe('language code, e.g.: pt_BR'),
         values: z
           .record(z.string(), z.string())
           .describe(
-            'valor de cada parâmetro, na chave que a tela de templates mostra (ex.: "1", "2")',
+            'value of each parameter, under the key that the templates screen shows (e.g. "1", "2")',
           ),
       })
       .passthrough(),
@@ -2775,6 +2777,12 @@ async function executarTurnoDoAgente(
   // O que o modelo de fato mandou neste turno (depois da cadeia). A trava "a
   // pergunta saiu?" do roteiro de atendimento lê daqui.
   const corposEnviados: string[] = [];
+  // DUPLICATA PRÓXIMA NO MESMO TURNO: corpos de `send_message` que PASSARAM pela
+  // cadeia e foram aceitos neste turno (o corpo PRÉ-cadeia, para comparar candidato
+  // contra candidato). É a memória que a régua `near-dup.ts` consulta para suprimir
+  // restatemente — o defeito medido do piloto (4 respostas a 1 pergunta, 3 vindas da
+  // correção do turno mudo). Só conteúdos ACEITOS entram: um veto não é resposta.
+  const corposAceitosDoTurno: string[] = [];
   // #1943: o turno foi DESCARTADO como obsoleto (guard `resposta_obsoleta`, #1940)
   // ainda no run — o cliente escreveu de novo enquanto o modelo pensava. Quando
   // ligada, NADA mais sai dele, nem a pergunta pendente do roteiro (que segue
@@ -3186,6 +3194,7 @@ async function executarTurnoDoAgente(
               conversationId: input.conversationId,
               body: finalBody,
               template: { name: template_name, language, values },
+              enforceHumanTakeoverCheck: true,
             });
           },
         });
@@ -3271,6 +3280,32 @@ async function executarTurnoDoAgente(
               code: 'corpo_vazio',
               message:
                 'O texto da mensagem ficou vazio. Escreva a resposta de verdade e chame send_message de novo.',
+            },
+          };
+        }
+        // DUPLICATA PRÓXIMA NO MESMO TURNO (near-dup): o corpo é quase idêntico a algo
+        // que JÁ foi aceito e enviado NESTE turno. O contrato é UMA resposta adequada e
+        // completa — restatemente imediato é redundância, não informação nova. Suprime
+        // sem tocar no canal nem no ledger (nada é marcado como entregue), devolvendo ao
+        // modelo um erro de ENSINO (mesma forma de corpo_vazio/resposta_obsoleta). Cobre
+        // o caminho de recuperação do turno mudo: a correção re-entra por aqui, memória
+        // em memória. Bolhas de UM send_message não se comparam entre si (só candidato
+        // contra candidato), então fatiamento legítimo não se autossuprime.
+        const corpoRepetido = encontraDuplicado(body, corposAceitosDoTurno);
+        if (corpoRepetido !== null) {
+          runLog.info('duplicate_suppressed — candidato quase idêntico ao já aceito no turno', {
+            job_id: liveJob().id,
+            prior_len: corpoRepetido.length,
+            candidato_len: body.length,
+          });
+          return {
+            ok: false,
+            error: {
+              code: 'duplicate_suppressed',
+              message:
+                'Você já enviou uma mensagem muito parecida a esta neste turno — ela NÃO foi reenviada. ' +
+                'Não repita a mesma informação. Se há algo genuinamente novo a acrescentar, envie SÓ a parte nova; ' +
+                'senão encerre o turno agora.',
             },
           };
         }
@@ -3529,6 +3564,7 @@ async function executarTurnoDoAgente(
                   conversationId: input.conversationId,
                   body: corpo,
                   ...(media ? { media } : {}),
+                  enforceHumanTakeoverCheck: true,
                 });
               };
               // Cada foto é uma mensagem física: só vão as que cabem no que resta do teto
@@ -3699,6 +3735,12 @@ async function executarTurnoDoAgente(
           }
           const outcome = chain.outcome;
           outcomes.push(outcome);
+          // MEMÓRIA DE DUPLICATA: só o que saiu de fato vira referência para a régua.
+          // sent/already_sent/queued = o corpo (ou quase) chegou/chegará ao cliente;
+          // blocked/failed/unavailable não é resposta — não deve suprimir a próxima.
+          if (outcome.kind === 'sent' || outcome.kind === 'already_sent' || outcome.kind === 'queued') {
+            corposAceitosDoTurno.push(body);
+          }
           if (outcome.kind === 'sent' && pendingCitations.length > 0) {
             try {
               await pool.query(
@@ -4600,6 +4642,29 @@ async function executarTurnoDoAgente(
         ? openingTextOnly
         : [{ role: 'user', content: [{ type: 'text', text: openingText }, ...nativeParts] }];
 
+    // MEMÓRIA DE DUPLICATA CRUZADA (near-dup): semeia a régua com o que JÁ saiu
+    // para esta conversa desde a última inbound do cliente. Num turno fresco que
+    // responde mensagem NOVA a janela está vazia (nada saiu depois dela), então
+    // nada legítimo é suprimido; num follow-up de promessa que re-responde uma
+    // conversa CALADA a janela está cheia e o re-resposta quase idêntico é
+    // suprimido — o 4º defeito do piloto. Não-fatal: banco indisponível → degrada
+    // para a memória só-do-turno (dedup parcial melhor que turno derrubado).
+    if (turnoVaiFalarComOLead(liveJob())) {
+      try {
+        const jaDito = await corposEnviadosDesdeUltimaInbound(pool, {
+          organizationId: tenantId,
+          conversationId: input.conversationId,
+        });
+        if (jaDito.length > 0) {
+          corposAceitosDoTurno.push(...jaDito);
+        }
+      } catch (err) {
+        runLog.warn('memória de duplicata não carregada — dedup cai só para o turno', {
+          error: (err instanceof Error ? err.message : String(err)).slice(0, 120),
+        });
+      }
+    }
+
     // "digitando…" ENQUANTO o modelo pensa. A pausa humana antes da 1ª bolha
     // (`esperaForaDoLock`) desconta este tempo e quase sempre zera — e com espera
     // zero ela não acende presença. Sem esta linha o cliente esperava a chamada
@@ -4635,12 +4700,22 @@ async function executarTurnoDoAgente(
         messages: openingMessages,
         tools,
         maxSteps,
-        // Rascunho: a resposta é o send_message ACEITO; a etapa seguinte só
-        // "encerrava". Aceito, e não chamado: o envio vetado pela cadeia
-        // before_send volta ao modelo para ele reescrever (o 1º veto ensina).
-        ...(preview?.kind === 'assisted'
-          ? { pararQuando: () => preview.result.candidates.length > 0 }
-          : {}),
+        // O loop do modelo termina depois do 1º envio ACEITO — e não chamado.
+        // O predicado é avaliado ao FIM da etapa (todas as tools do passo
+        // terminam antes; `stopWhen` em run-model-call), então send_message e
+        // update_lead_state emitidos NA MESMA etapa completam os dois antes da
+        // parada. O sinal de cada caminho é o da aceitação REAL: na prévia
+        // (sandbox e rascunho assistido) o candidato só entra em
+        // `result.candidates` depois da cadeia before_send passar
+        // (`applyPreviewPolicy` — veto vira impedimento, sem candidato); no
+        // vivo, `seq` só avança quando o envio de fato sai pro canal, nunca em
+        // veto (ver "teto de mensagens físicas" na declaração de `seq`). Envio
+        // vetado volta ao modelo como erro de ensino e NÃO encerra o turno
+        // (o 1º veto ensina — semântica que o rascunho assistido já tinha e
+        // que agora vale para todos os caminhos). `MAX_SENDS_PER_TURN` segue
+        // como proteção secundária, não mais como limite atingível por
+        // iteração do modelo.
+        pararQuando: () => (preview ? preview.result.candidates.length > 0 : seq > 0),
         ...(agentConfig !== null
           ? {
               model: agentConfig.model,
@@ -4653,6 +4728,26 @@ async function executarTurnoDoAgente(
       },
       { registry: deps.registry, log: runLog },
     );
+
+    // WORKSTREAM B — SAÍDA TRUNCADA (finish_reason = 'length'): o modelo bateu no
+    // teto de tokens de saída e o que produziu veio cortado. A detecção mora aqui,
+    // no ponto que consome o resultado, porque o seam devolve o resultado INTEIRO
+    // (ramo generateText e ramo de assinatura streamText — este último monta o
+    // objeto à mão e só não cega se repassar o finishReason, ver run-model-call).
+    //
+    // NUNCA se manda parcial: texto fora de `send_message` não sai, e argumento de
+    // tool cortado falha no schema (zod) e nem executa. Logo, truncamento só é
+    // DANO quando nada despachou — aí vira correção limitada (UM retry, o mesmo
+    // caminho do turno mudo) e, se não recuperar, FALHA TERMINAL VISÍVEL com caso
+    // humano. Nunca retry infinito, nunca silêncio mascarado como decisão.
+    const saidaTruncada = turn.result.finishReason === 'length';
+    if (saidaTruncada) {
+      runLog.warn('output_truncated — resposta do modelo cortada no teto de tokens', {
+        job_id: job?.id ?? null,
+        enviadas_ate_aqui: outcomes.length,
+        finish_reason: turn.result.finishReason,
+      });
+    }
 
     // F4-04: correlação dos dois sinais do MESMO turno — jailbreak ALTO + tentativa de
     // promessa fora de tabela (F4-01). Ambos estão determinados aqui (o jailbreak rodou na
@@ -4690,7 +4785,12 @@ async function executarTurnoDoAgente(
     // conversa e as mesmas ferramentas: o envio passa pela cadeia inteira, como
     // qualquer outro. O fechamento lê a fita das DUAS chamadas.
     let mensagensDoTurno: ModelMessage[] = turn.result.responseMessages;
-    if (
+    // Foi PEDIDA (e logo abaixo EXECUTADA) a correção limitada do turno mudo? O
+    // valor é consumido DEPOIS dela, no desfecho terminal: silêncio que persiste
+    // mesmo com a correção rodada é falha terminal visível — não mais um turno
+    // mudo qualquer. As condições são as do próprio pedido (turno-mudo.ts):
+    // razões legítimas de silêncio nem chegam a corrigir.
+    const correcaoDoTurnoMudoPedida =
       !preview &&
       liveJob().kind === 'inbound_turn' &&
       turnoMudoPedeCorrecao({
@@ -4699,8 +4799,8 @@ async function executarTurnoDoAgente(
         turnoDescartado,
         passouParaAEquipe,
         capDeEnvio: capDeEnvioAtingido(),
-      })
-    ) {
+      });
+    if (correcaoDoTurnoMudoPedida) {
       runLog.warn('turno terminou sem mensagem ao cliente — pedindo UMA correção', {
         job_id: liveJob().id,
       });
@@ -4736,6 +4836,78 @@ async function executarTurnoDoAgente(
         throw new Error('envio marcado como failed pelo CRM — run re-tentado pela fila');
       }
       runLog.info('correção do turno mudo concluída', { messages_sent: outcomes.length });
+    }
+
+    // WORKSTREAM B — FALHA TERMINAL VISÍVEL: duas causas, um único bloco (um
+    // caso humano por turno, nunca duplicado):
+    //  - saída TRUNCADA (finish_reason=length): o modelo cortou no teto de tokens;
+    //  - saída VAZIA PERSISTENTE: o turno terminou sem mensagem, a correção
+    //    limitada do turno mudo (UMA, `correcaoDoTurnoMudoPedida` acima) rodou e
+    //    AINDA assim nada saiu.
+    // As condições isentam toda razão LEGÍTIMA de silêncio — turno descartado
+    // (obsoleto), passagem para a equipe (handoff do cliente), teto de pacing, e
+    // `tentativasDeEnvio === 0` (o modelo nunca chegou a chamar `send_message`;
+    // se chamou e levou veto, o veto é a razão e já ensinou o modelo). Os flags
+    // são re-avaliados DEPOIS da correção: se nela nasceu handoff/teto/descarte,
+    // aquilo é a razão e não há caso. O bloco não despacha nada (só registra e
+    // abre caso) — logo nunca duplica mensagem; `caso.ok` gateia o move do funil
+    // — logo nunca duplica caso humano. O retry continua limitado à UMA correção.
+    const silencioSemRazaoLegitima =
+      !preview &&
+      outcomes.length === 0 &&
+      seq === 0 &&
+      tentativasDeEnvio === 0 &&
+      !turnoDescartado &&
+      !passouParaAEquipe &&
+      !capDeEnvioAtingido();
+    if (silencioSemRazaoLegitima && (saidaTruncada || correcaoDoTurnoMudoPedida)) {
+      const desfechoTerminal = saidaTruncada
+        ? 'output_truncated_recovered_failed'
+        : 'empty_output_recovered_failed';
+      const kindDoCaso = saidaTruncada ? 'saida_truncada' : 'saida_vazia_persistente';
+      runLog.error(`${desfechoTerminal} — sem nenhuma mensagem entregue; abrindo caso humano`, {
+        job_id: job?.id ?? null,
+        kind: liveJob().kind,
+        finish_reason: turn.result.finishReason,
+        correcao_limitada_rodou: correcaoDoTurnoMudoPedida,
+      });
+      try {
+        const caso = await openCase(
+          pool,
+          { tenantId, conversationId: input.conversationId, agentId: agentConfig?.agentId ?? null },
+          {
+            title: saidaTruncada
+              ? 'Resposta do agente truncada — nenhuma mensagem saiu'
+              : 'Agente não respondeu — saída vazia persistente',
+            summary: saidaTruncada
+              ? 'finish_reason=length: o modelo cortou no teto de tokens de saída e o turno não despachou ' +
+                'nenhuma mensagem mesmo após a correção limitada (UM retry). Atendente precisa responder o cliente.'
+              : 'O turno terminou sem nenhuma mensagem ao cliente e a correção limitada do turno mudo (UM retry), ' +
+                'que rodou, também não despachou nada. Atendente precisa responder o cliente.',
+            blocker: kindDoCaso,
+            source: 'guardrail_autofallback',
+            kind: kindDoCaso,
+            contextSnapshot: buildCaseContextSnapshot(),
+          },
+        );
+        if (caso.ok) {
+          openedCaseThisTurn = true;
+          moverParaHandoffBestEffort(kindDoCaso);
+        } else {
+          // Caso não abriu (já existe um aberto) — a falha fica visível pelo log
+          // de erro acima; nada de retry extra aqui.
+          runLog.error(`${desfechoTerminal} — caso humano não abriu (já existe)`, {
+            job_id: job?.id ?? null,
+            code: caso.error.code,
+          });
+        }
+      } catch (err) {
+        // Best-effort: erro do banco não pode mascarar a causa original.
+        runLog.error(`${desfechoTerminal} — openCase lançou`, {
+          job_id: job?.id ?? null,
+          error: (err instanceof Error ? err.message : String(err)).slice(0, 160),
+        });
+      }
     }
 
     // ROTEIRO: a pergunta pendente é compromisso. Se o modelo não a fez, o motor
@@ -4789,6 +4961,7 @@ async function executarTurnoDoAgente(
                   seq,
                   conversationId: input.conversationId,
                   body: finalBody,
+                  enforceHumanTakeoverCheck: true,
                 });
               },
             });

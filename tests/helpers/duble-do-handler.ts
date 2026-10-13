@@ -19,7 +19,15 @@ export interface CapturasDoDubleDoHandler {
 }
 
 export interface OpcoesDoDubleDoHandler {
-  conversation: LinhaDoDuble;
+  /**
+   * A linha da conversa — ou uma FUNÇÃO que devolve a linha A CADA leitura,
+   * recebendo o `select` da consulta. É assim que um teste simula estado que
+   * MUDA no meio do envio (a corrida de takeover: silêncio ausente na leitura
+   * da entrada, `'infinity'` na releitura fresca da porta de saída) sem
+   * depender de contagem de chamadas: o que decide é o que o `select` pede.
+   * Mesmo padrão do `rpcData` abaixo.
+   */
+  conversation: LinhaDoDuble | ((select: string) => LinhaDoDuble);
   channelMetadata?: LinhaDoDuble;
   templateRow?: LinhaDoDuble | null;
   rpcData?: unknown | (() => unknown);
@@ -166,6 +174,8 @@ export function criarDubleDoHandler(
 
   const mensagens: LinhaDoDuble[] = (opcoes.mensagensIniciais ?? []).map((r) => ({ ...r }));
   let contadorDeMensagens = 0;
+  const linhaDaConversa = (select: string): LinhaDoDuble =>
+    typeof opcoes.conversation === "function" ? opcoes.conversation(select) : opcoes.conversation;
   const filtrarMensagens = (
     filtros: Array<(r: LinhaDoDuble) => boolean>,
   ): LinhaDoDuble[] => mensagens.filter((r) => filtros.every((f) => f(r)));
@@ -194,8 +204,8 @@ export function criarDubleDoHandler(
                 return {
                   data:
                     opcoes.projetarConversa === true
-                      ? projetar(opcoes.conversation, colunas)
-                      : { ...opcoes.conversation },
+                      ? projetar(linhaDaConversa(colunas), colunas)
+                      : { ...linhaDaConversa(colunas) },
                   error: null,
                 };
               },
@@ -214,7 +224,7 @@ export function criarDubleDoHandler(
         // pré-go-live da IA e `provider`/`meta_waba_id` para o espelho do canal.
         // Devolve as duas — quem lê uma ignora a outra, como o PostgREST
         // devolveria a linha com as colunas pedidas.
-        const sessao = (opcoes.conversation.channel_sessions ?? {}) as LinhaDoDuble;
+        const sessao = (linhaDaConversa("").channel_sessions ?? {}) as LinhaDoDuble;
         const cadeia = {
           select: (colunas = "") => {
             capturas.selects.channel_sessions!.push(colunas);

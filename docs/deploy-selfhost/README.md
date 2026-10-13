@@ -48,7 +48,9 @@ Edite o `.env` e preencha (mínimo):
 - **Domínio**: `DOMAIN`, `NEXT_PUBLIC_APP_URL=https://SEU_DOMINIO`,
   `WAHA_WEBHOOK_BASE_URL=http://app:3000`
   > O WAHA da stack chama o app pela rede interna do Docker — nunca pelo
-  > domínio: a rota global do webhook só atende a rede interna.
+  > domínio: a rota global do webhook só atende a rede interna (o Caddy responde
+  > 403 no webhook global público — `Caddyfile`, `@waha_global`; é o mesmo valor
+  > que o `hostgator-setup-kit/install.sh` grava)
   > Rodando SEM TLS (ex.: `http://IP:PORTA`, sem o Caddy)? Basta o
   > `NEXT_PUBLIC_APP_URL` começar com `http://` — o cookie de sessão deixa de
   > ser `Secure` automaticamente e o login funciona. Com `https://`, `Secure`

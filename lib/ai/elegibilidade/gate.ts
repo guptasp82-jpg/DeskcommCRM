@@ -112,7 +112,15 @@ export interface DecisaoDeElegibilidade {
   bloqueioPorAllowlist: boolean;
 }
 
-function silenciadoAgora(until: Date | number | null, agora: Date): boolean {
+/**
+ * O silêncio está vigente AGORA? Exportado porque a MESMA régua decide em três
+ * lugares — o gate que enfileira/roda, o veto de takeover na porta de saída do
+ * envio (`_handler.ts`) e o que mais precisar ler `bot_silenced_until`. Passe o
+ * valor por `normalizarInstante` antes (o `'infinity'` do Postgres chega como
+ * string): uma cópia da comparação divergiria na primeira vez que alguém
+ * esquecesse o `'infinity'` num lado.
+ */
+export function silenciadoAgora(until: Date | number | null, agora: Date): boolean {
   if (until === null) return false;
   const t = typeof until === "number" ? until : until.getTime();
   return t > agora.getTime();

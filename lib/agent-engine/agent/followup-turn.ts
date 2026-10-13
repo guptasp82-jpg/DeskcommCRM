@@ -51,6 +51,8 @@ import {
   type LeadCheckpointRow,
 } from './inbound-turn';
 import { isLeadInHandoff } from './human-handoff';
+import { encontraDuplicado } from './near-dup';
+import { corposEnviadosDesdeUltimaInbound } from './memoria-envio';
 import { aplicarPessoaNoComandoAoTurno } from '@/lib/followup/pessoa-no-comando-no-turno';
 import { fusoDaOrganizacao } from './fuso-da-org';
 import {
@@ -637,7 +639,16 @@ export function createFollowupTurnHandler(deps: FollowupTurnDeps) {
 type EnvioFixoDesfecho =
   | { kind: "sent" }
   | { kind: "deferred"; until: Date; reason: string }
-  | { kind: "skipped" };
+  | { kind: "skipped" }
+  | {
+      /**
+       * DUPLICATA PRÓXIMA (near-dup): o corpo fixo quase repetia o que já saiu
+       * para esta conversa desde a última inbound do cliente — re-resposta
+       * redundante, não informação nova. Distinto de `skipped` para observar o
+       * defeito; NUNCA conta como entregue (nenhuma ledger row, nenhum message).
+       */
+      kind: "duplicate_suppressed";
+    };
 
 interface ReentrySendTarget {
   tenantId: string;
@@ -724,6 +735,11 @@ async function runFlowDrivenTurn(
         await complete(pool, { jobId:job.id,jobClaim:claimOfJob(job), organizationId: target.tenantId, enrollmentId, nodeId, result: { kind: 'sent' } });
       } else if (desfecho.kind === 'skipped') {
         await complete(pool,{jobId:job.id,jobClaim:claimOfJob(job),organizationId:target.tenantId,enrollmentId,nodeId,result:{kind:'skipped',reason:'O envio foi recusado pelas regras do atendimento.'}});
+      } else if (desfecho.kind === 'duplicate_suppressed') {
+        // Não é "recusado pelas regras": é redundância de conteúdo. Completamos o
+        // nó como skipped com motivo DISTINTO (o enrollment não ganha tipo novo) e
+        // a observabilidade vive no log 'duplicate_suppressed' dentro do remetente.
+        await complete(pool,{jobId:job.id,jobClaim:claimOfJob(job),organizationId:target.tenantId,enrollmentId,nodeId,result:{kind:'skipped',reason:'duplicate_suppressed: o conteúdo desta mensagem já havia sido enviado a esta conversa; re-resposta redundante suprimida.'}});
       } else {
         await complete(pool,{jobId:job.id,jobClaim:claimOfJob(job),organizationId:target.tenantId,enrollmentId,nodeId,result:{kind:'deferred',until:desfecho.until,reason:desfecho.reason}});
       }
@@ -1104,6 +1120,39 @@ async function sendFixedOutbound(
     return { kind: "skipped" };
   }
 
+  // DUPLICATA PRÓXIMA EM FOLLOW-UP FIXO (near-dup): um follow-up de promessa não
+  // passa pelo `send_message` do turno, então o gate em memória do turno não o
+  // pega. Antes de despachar, compara o corpo com o que já saiu para esta conversa
+  // DESDE a última inbound do cliente (janela = calada; vazia se o cliente falou de
+  // novo). Quase-idêntico = re-resposta redundante → suprime com desfecho DISTINTO,
+  // sem ledger row nem mensagem (nunca marcado como entregue). Escopo: só corpo
+  // livre — template aprovado tem contrato/idempotência próprios. Se `promised_at`
+  // prometia uma ação que o histórico já entregou, o corpo é quase-idêntico ao que
+  // já saiu e cai aqui (não é "assunto parecido com redação diferente" — isso passa).
+  if (!modelo) {
+    try {
+      const jaDito = await corposEnviadosDesdeUltimaInbound(pool, {
+        organizationId: tenantId,
+        conversationId,
+      });
+      const repetido = encontraDuplicado(body, jaDito);
+      if (repetido !== null) {
+        runLog.info('duplicate_suppressed — follow-up fixo quase idêntico ao já enviado', {
+          kind: job.kind,
+          prior_len: repetido.length,
+          candidato_len: body.length,
+          conversa: conversationId,
+        });
+        return { kind: "duplicate_suppressed" };
+      }
+    } catch (err) {
+      // Não-fatal: sem memória, o follow-up segue (cadeias seguintes ainda valem).
+      runLog.warn('memória de duplicata do follow-up indisponível — enviando sem gate', {
+        error: (err instanceof Error ? err.message : String(err)).slice(0, 120),
+      });
+    }
+  }
+
   const context = await getLeadContext(
     pool,
     deps.crmCfg,
@@ -1157,6 +1206,7 @@ async function sendFixedOutbound(
       channel.send({
         tenantId, leadId, jobId: job.id, jobClaim: claimOfJob(job), seq: 1, conversationId, body: finalBody,
         ...(modelo !== undefined ? { template: modelo } : {}),
+        enforceHumanTakeoverCheck: true,
       }),
   });
 

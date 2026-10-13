@@ -146,7 +146,7 @@ const horariosLivresShape = {
   event_type_slug: z
     .string()
     .min(1)
-    .describe("o identificador legível do tipo de atendimento (ex.: 'consulta-inicial')"),
+    .describe("the readable identifier of the service type (e.g. 'consulta-inicial')"),
   /**
    * ⚠️ O MODELO NÃO SABE QUE DIA É HOJE — medido neste repo, num turno real: pedido
    * "daqui a três dias", ele mandou a data do treino dele. Por isso o caminho
@@ -160,8 +160,8 @@ const horariosLivresShape = {
     .max(MAXIMO_DE_DIAS)
     .optional()
     .describe(
-      `quantos dias olhar a partir de agora (padrão ${DIAS_PADRAO}). Use ESTE campo se você não sabe a data de hoje. ` +
-        `Se 'dia' também for informado, 'dia' tem precedência.`,
+      `how many days to look from now (default ${DIAS_PADRAO}). Use THIS field if you do not know today's date. ` +
+        `If 'dia' is also provided, 'dia' takes precedence.`,
     ),
   /**
    * A data civil é deliberadamente diferente de um ISO com offset. O modelo sabe
@@ -174,8 +174,8 @@ const horariosLivresShape = {
     .regex(/^\d{4}-\d{2}-\d{2}$/, "dia deve estar em YYYY-MM-DD")
     .optional()
     .describe(
-      "dia civil pedido pelo cliente, em YYYY-MM-DD. Use para uma data específica; o servidor aplica o fuso da agenda " +
-        "(tem precedência sobre dias_a_frente).",
+      "civil day requested by the customer, in YYYY-MM-DD. Use for a specific date; the server applies the schedule timezone " +
+        "(it takes precedence over dias_a_frente).",
     ),
   owner_user_id: z.string().uuid().optional(),
   limite: z
@@ -184,7 +184,7 @@ const horariosLivresShape = {
     .min(1)
     .max(HORARIOS_MAX)
     .optional()
-    .describe(`quantos horários no máximo (padrão ${HORARIOS_PADRAO})`),
+    .describe(`maximum number of slots (default ${HORARIOS_PADRAO})`),
 };
 
 /** O ramo BOM da coleta — o que as DUAS ferramentas de agenda publicam. */
@@ -285,23 +285,23 @@ function comRessalvaDeAgendaNuncaLida(resultado: unknown): string {
 export const crmFindFreeSlots: McpToolDefinition<typeof horariosLivresShape> = {
   name: "crm_find_free_slots",
   description:
-    "Mostra os horários livres de um tipo de atendimento, já considerando a jornada de trabalho " +
-    "do atendente, folgas, o que ele já tem marcado e a agenda externa dele. " +
-    "Use ANTES de oferecer horário ao cliente: oferecer um horário que não existe e depois voltar " +
-    "atrás é pior do que demorar um instante a mais para responder. " +
-    "Cada horário vem em dois formatos: `inicio` é o instante que você COPIA para `starts_at` de " +
-    "`crm_book_appointment`, sem reescrever; `quando` já está na hora local da agenda e é o que você " +
-    "fala com a pessoa. " +
-    "A lista vem cortada no `limite` e espalhada ao longo do período: `total_de_horarios` diz quantos " +
-    "existem e `ha_mais` avisa que sobraram — lista cortada NÃO é agenda cheia. " +
-    "QUANDO: informe `dias_a_frente` (a partir de agora — ex.: 7 para a próxima semana). " +
-    "Para uma data que o cliente nomeou, use `dia` em YYYY-MM-DD; o servidor aplica o fuso da agenda. " +
-    "NUNCA monte um intervalo UTC por conta própria. " +
-    "Lista vazia NÃO é erro e NÃO significa que a agenda está cheia: leia `publicou_horarios`. " +
-    "Se ele for false, o atendente ainda não publicou os horários dele — não invente horários e " +
-    "não diga que está lotado; avise que alguém da equipe confirma. " +
-    "Se `fuso_suposto` for true, o fuso da agenda não foi escolhido por ninguém, veio do padrão: " +
-    "ofereça o horário pedindo confirmação em vez de afirmar.",
+    "Shows the free slots of a type of service, already taking into account the work schedule " +
+    "of the professional, time off, what they already have booked and their external calendar. " +
+    "Use BEFORE offering a time to the customer: offering a time that does not exist and then backing " +
+    "out is worse than taking an extra instant to answer. " +
+    "Each slot comes in two formats: `inicio` is the instant that you COPY into `starts_at` of " +
+    "`crm_book_appointment`, without rewriting it; `quando` is already in the local time of the schedule and is what you " +
+    "say to the person. " +
+    "The list comes cut at `limite` and spread across the period: `total_de_horarios` says how many " +
+    "exist and `ha_mais` warns that some were left out — a cut list is NOT a full calendar. " +
+    "WHEN: provide `dias_a_frente` (from now — e.g. 7 for next week). " +
+    "For a date the customer named, use `dia` in YYYY-MM-DD; the server applies the schedule timezone. " +
+    "NEVER build a UTC interval on your own. " +
+    "An empty list is NOT an error and does NOT mean the calendar is full: read `publicou_horarios`. " +
+    "If it is false, the professional has not published their times yet — do not invent times and " +
+    "do not say it is fully booked; tell them that someone from the team confirms. " +
+    "If `fuso_suposto` is true, the schedule timezone was not chosen by anyone, it came from the default: " +
+    "offer the time asking for confirmation instead of asserting it.",
   inputSchema: horariosLivresShape,
   category: "read",
   requiresRole: "agent",
