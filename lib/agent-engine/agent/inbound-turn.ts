@@ -152,6 +152,7 @@ import {
 import { composeSystemPrompt, loadOrgMemory, renderOrgMemory } from './org-memory';
 import { matchesHandoffKeyword, type PublishedAgentConfig } from './agent-config';
 import { garantirPerguntaDoRoteiro, perguntaDoRoteiroPodeSair, prepararRoteiroDoTurno } from './roteiro-no-turno';
+import { executarFluxoDeProntoAtendimento } from './report-readiness/workflow';
 import { validarRespostaDoFluxo } from './flow-validate';
 import { moduloLigadoComMemo } from '@/lib/instalacao/modulos';
 import { msAteAJanelaAbrir } from './janela-de-atendimento';
@@ -2636,6 +2637,107 @@ async function executarTurnoDoAgente(
       lead_avisado: aviso.avisado,
     });
     return; // bot silencia: a confirmação já saiu, e nada mais sai neste turno
+  }
+
+  // FLUXO DE CONSULTA DE LAUDO (módulo opcional `laudos`) — determinístico,
+  // entra DEPOIS de tudo que silencia o turno (handoff, pausa, pedido de
+  // humano, opt-out) e ANTES do roteiro de atendimento: mensagem de "laudo
+  // pronto?" (EN/HI/Hinglish) segue o workflow de serviço no lugar de uma FAQ
+  // genérica. Módulo desligado (default) = retorna `null` sem consulta de
+  // estado sequer: o comportamento do motor é o de antes, zero mudança até o
+  // dono ligar em /admin/sistema. Engajou = o modelo NÃO roda neste turno (sem
+  // resposta duplicada); não engajou = o modelo roda como sempre.
+  let seqDoFluxoDeLaudo = 0;
+  const fluxoDeLaudo =
+    !preview && liveJob().kind === 'inbound_turn' && !optedOutThisTurn
+      ? await executarFluxoDeProntoAtendimento({
+          db: pool,
+          log: runLog,
+          tenantId,
+          leadId,
+          conversationId: input.conversationId,
+          msgId: input.inboundMessageId ?? null,
+          texto: currentInboundText ?? null,
+          moduloLigado: () => moduloLigadoComMemo(deps.crmCfg.supabase, 'laudos'),
+          maxSends: deps.knobs.maxSendsPerTurn ?? DEFAULT_MAX_SENDS_PER_TURN,
+          // Case B (lookup dirigido, sem busca com IA): últimas mensagens que o
+          // AGENTE mandou — a mensagem de registro prévia é dele, não do paciente.
+          buscarHistorico: async () => {
+            const { rows } = await pool.query<{ body: string }>(
+              `select body from messages
+                where organization_id = $1 and conversation_id = $2
+                  and direction = 'outbound' and body is not null
+                order by sent_at desc, created_at desc, id desc limit 50`,
+              [tenantId, input.conversationId],
+            );
+            return rows.map((r) => r.body);
+          },
+          // Mesma cadeia de guardrails do motor (runBeforeSend + ledger por
+          // (job, seq)) que o aviso de escalação e a pergunta do roteiro usam:
+          // texto determinístico passa pela cadeia, mas spin por design recebe
+          // `enforceSpinning: false` (é a mesma frase para leads diferentes).
+          enviar: async (corpo: string) => {
+            const chain = await runBeforeSend({
+              pool,
+              log: runLog,
+              agentOperation,
+              tenantId,
+              leadId,
+              jobId: liveJob().id,
+              channelSessionId: input.channelSessionId,
+              body: corpo,
+              optedOutThisTurn,
+              resposta: eTurnoDeResposta(liveJob()),
+              crmDailyLimit: null,
+              enforceSpinning: false,
+              now: clock(),
+              sleep: deps.sleep,
+              lgpd,
+              ...(deps.knobs.disclosureMode !== undefined ? { disclosureMode: deps.knobs.disclosureMode } : {}),
+              send: (finalBody: string) => {
+                seqDoFluxoDeLaudo += 1;
+                return liveChannel().send({
+                  tenantId,
+                  leadId,
+                  jobId: liveJob().id,
+                  jobClaim: claimOfJob(liveJob()),
+                  agentOperation,
+                  seq: seqDoFluxoDeLaudo,
+                  conversationId: input.conversationId,
+                  body: finalBody,
+                });
+              },
+            });
+            return chain.status !== 'vetoed' && (chain.outcome.kind === 'sent' || chain.outcome.kind === 'already_sent');
+          },
+          handover: async (o: { titulo: string; resumo: string; detalhes: Record<string, string> }) => {
+            await performHumanHandoff(
+              pool,
+              { tenantId, leadId, conversationId: input.conversationId },
+              {
+                // Motivo em vocabulário aberto (é a segunda entrada do motor
+                // além de 'requested_human'); SEM passagem declarada e SEM
+                // aviso: o fluxo já mandou a mensagem de estado no idioma do
+                // paciente, e o aviso do emissor é pt/es — duplicaria e viraria
+                // outro idioma. Os campos coletados vão como `camposColetados`
+                // — o handoff os grava NA PASSAGEM (lida sob visão de
+                // conversa), nunca no corpo da Central.
+                reason: 'report_readiness',
+                conversationSummary: o.resumo,
+                inboxTitle: o.titulo,
+                camposColetados: o.detalhes,
+                log: runLog,
+              },
+            );
+          },
+        })
+      : null;
+  if (fluxoDeLaudo !== null && fluxoDeLaudo.engajado) {
+    runLog.info('fluxo de consulta de laudo tomou o turno — sem modelo', {
+      acoes: fluxoDeLaudo.acoes,
+      kind: liveJob().kind,
+    });
+    return; // bot do fluxo: o que saiu já saiu, e nada mais sai neste turno
   }
 
   // ROTEIRO DE ATENDIMENTO (módulo opcional `fluxos_atendimento`, #1130). Entra
