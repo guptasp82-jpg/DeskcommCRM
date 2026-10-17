@@ -4,9 +4,9 @@
  * entrega para humano. Nenhum envio real, nenhum acesso real de rede/banco —
  * o "banco" é um fake das três consultas de estado em `conversations.metadata`.
  *
- * O core NÃO traz integração de status: os braços verificado (Qmarksoft),
- * QR e pagamento são da extensão da instalação, e por isso não têm teste
- * aqui — o que o core garante é o gate e o caminho determinístico.
+ * O core NÃO traz integração de status: lookup verificado, imagem de
+ * pagamento e afins são da extensão da instalação, e por isso não têm
+ * teste aqui — o que o core garante é o gate e o caminho determinístico.
  *
  * Cobertura:
  *  1. detecção EN / hindi / hinglish (+ "miltajulta") e negativos de preço;

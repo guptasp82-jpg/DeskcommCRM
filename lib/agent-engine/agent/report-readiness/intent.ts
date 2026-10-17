@@ -23,7 +23,7 @@ function normalizar(texto: string): string {
 }
 
 /**
- * "Laudo/report" em qualquer idioma do piloto (inglês, devanagari).
+ * "Laudo/report" em qualquer idioma coberto (inglês, devanagari).
  */
 function temLaudo(t: string, original: string): boolean {
   return /report|रिपोर्ट|परिणाम|नतीज/.test(t) || /रिपोर्ट|परिणाम|नतीज/.test(original);

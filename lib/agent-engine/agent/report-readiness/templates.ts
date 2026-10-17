@@ -10,7 +10,7 @@
  * coisa na janela.
  *
  * O que NÃO está aqui de propósito: texto de status verificado, de valor ou de
- * QR. Status VERIFICADO é resposta de integração da instalação (extensão), e o
+ * imagem de pagamento. Status VERIFICADO é resposta de integração da instalação (extensão), e o
  * core não afirma status que não pode conferir — o único desfecho que ele
  * conhece é "isto precisa de checagem humana".
  */
