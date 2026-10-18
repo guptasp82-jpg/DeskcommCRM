@@ -288,3 +288,34 @@ describe("notas do mantenedor: log coerente e avisoAoLead registrado", () => {
     expect(avisos).toHaveLength(1);
   });
 });
+
+/**
+ * A entrega do fluxo de consulta de laudo (o gate `laudos` antes do modelo).
+ *
+ * O closure em `inbound-turn.ts` passa o desfecho do envio da mensagem de
+ * estado como `avisoAoLead`: `avisado: true` quando a mensagem SAIU pelo
+ * canal. Aqui se prova o que esse fato vira na linha da passagem — e que ele
+ * NÃO vira mensagem nenhuma: `performHumanHandoff` recebe pool, sem canal;
+ * toda statement capturada é banco, e insert em `messages` (o corpo que o
+ * paciente recebe) não existe neste caminho. O envio em si é UM por turno,
+ * provado no teste de patologia de `report-readiness.test.ts`
+ * (`envios).toEqual([VERIFICAR_EQUIPE])`).
+ */
+describe("a entrega do fluxo grava o desfecho do aviso e não manda mensagem", () => {
+  it("mensagem de estado saiu: cliente_avisado true na linha, um aviso da Central, zero mensagens novas", async () => {
+    await passar({
+      camposColetados: { nome: "Maria", data: "12/10" },
+      avisoAoLead: { avisado: true },
+    });
+    const linha = linhaDaPassagem();
+    expect(linha.motivo_codigo).toBe("verificacao_manual");
+    expect(linha.cliente_avisado).toBe(true);
+    expect(linha.aviso_motivo_codigo).toBeFalsy();
+    // O único aviso é o da Central (inbox do humano), uma vez só.
+    const avisos = consultas.filter((c) => /insert into agent_inbox_items/.test(c.sql));
+    expect(avisos).toHaveLength(1);
+    // Nenhum statement escreve em messages — o caminho não manda mensagem.
+    const mandouMensagem = consultas.filter((c) => /insert into messages/i.test(c.sql));
+    expect(mandouMensagem).toHaveLength(0);
+  });
+});

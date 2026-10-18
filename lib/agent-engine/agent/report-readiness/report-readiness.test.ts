@@ -435,4 +435,25 @@ describe('ordem no motor (mesma vigilância do teste de ordem do roteiro)', () =
     expect(iHandover).toBeGreaterThan(0);
     expect(fonte.slice(iHandover, iHandover + 600)).toContain('camposColetados: o.detalhes');
   });
+
+  it('a entrega do fluxo declara o desfecho do aviso (gravado, não notificado) e para o digitando', () => {
+    const fonte = readFileSync(join(process.cwd(), 'lib/agent-engine/agent/inbound-turn.ts'), 'utf8');
+    // O handover carrega `avisoAoLead` — a guarda congelada `handoff-avisa-o-lead`
+    // casa o identificador no call site; aqui se pinça o VALOR: ele vem do
+    // resultado do envio do fluxo, não de um `true` fixo.
+    const iHandover = fonte.indexOf("reason: 'report_readiness'");
+    expect(iHandover).toBeGreaterThan(0);
+    const opcoes = fonte.slice(iHandover, iHandover + 900);
+    expect(opcoes).toContain('avisoAoLead:');
+    expect(opcoes).toContain('mensagemDoEstadoSaiu === true');
+    // O envio do fluxo REGISTRA o desfecho do último envio...
+    const iRegistro = fonte.indexOf('mensagemDoEstadoSaiu = saiu;');
+    expect(iRegistro).toBeGreaterThan(0);
+    // ...e para o "digitando" antes de cada bolha, igual aos outros `send:`
+    // do arquivo (a guarda anti-ban congelada cobre o padrão).
+    const iFluxo = fonte.indexOf('await executarFluxoDeProntoAtendimento(');
+    const iSend = fonte.indexOf('send: (finalBody: string) => {', iFluxo);
+    expect(iSend).toBeGreaterThan(iFluxo);
+    expect(fonte.slice(iSend, iSend + 120)).toContain('pararDigitando();');
+  });
 });

@@ -2648,6 +2648,11 @@ async function executarTurnoDoAgente(
   // dono ligar em /admin/sistema. Engajou = o modelo NÃO roda neste turno (sem
   // resposta duplicada); não engajou = o modelo roda como sempre.
   let seqDoFluxoDeLaudo = 0;
+  // O desfecho do ÚLTIMO envio do fluxo neste turno: vira `avisoAoLead` na
+  // entrega, para a linha da passagem dizer se o paciente recebeu a mensagem
+  // de estado — e não para o handoff mandar um aviso a mais (ele não manda:
+  // quem manda ao paciente é `avisarLeadDaEscalacao`, que o fluxo não chama).
+  let mensagemDoEstadoSaiu = false;
   const fluxoDeLaudo =
     !preview && liveJob().kind === 'inbound_turn' && !optedOutThisTurn
       ? await executarFluxoDeProntoAtendimento({
@@ -2695,6 +2700,7 @@ async function executarTurnoDoAgente(
               lgpd,
               ...(deps.knobs.disclosureMode !== undefined ? { disclosureMode: deps.knobs.disclosureMode } : {}),
               send: (finalBody: string) => {
+                pararDigitando(); // a mensagem sai agora; renovar depois dela mentiria
                 seqDoFluxoDeLaudo += 1;
                 return liveChannel().send({
                   tenantId,
@@ -2708,7 +2714,9 @@ async function executarTurnoDoAgente(
                 });
               },
             });
-            return chain.status !== 'vetoed' && (chain.outcome.kind === 'sent' || chain.outcome.kind === 'already_sent');
+            const saiu = chain.status !== 'vetoed' && (chain.outcome.kind === 'sent' || chain.outcome.kind === 'already_sent');
+            mensagemDoEstadoSaiu = saiu;
+            return saiu;
           },
           handover: async (o: {
             titulo: string;
@@ -2721,19 +2729,31 @@ async function executarTurnoDoAgente(
               { tenantId, leadId, conversationId: input.conversationId },
               {
                 // Motivo em vocabulário aberto (é a segunda entrada do motor
-                // além de 'requested_human'); SEM passagem declarada e SEM
-                // aviso: o fluxo já mandou a mensagem de estado no idioma do
-                // paciente, e o aviso do emissor é pt/es — duplicaria e viraria
-                // outro idioma. Os campos coletados vão como `camposColetados`
-                // — o handoff os grava NA PASSAGEM (lida sob visão de
-                // conversa), nunca no corpo da Central. `idempotenciaDaPassagem`
-                // = a mensagem reivindicada: retry do mesmo turno lê o recibo e
-                // não duplica a linha; mensagem nova é fato novo e grava.
+                // além de 'requested_human'); SEM passagem declarada: o aviso
+                // do emissor é pt/es e duplicaria a mensagem de estado que o
+                // fluxo acabou de mandar no idioma do paciente. O DESFECHO
+                // dessa mensagem vai como `avisoAoLead` — `performHumanHandoff`
+                // só GRAVA (linha `cliente_avisado` + a Central do humano), não
+                // manda nada ao paciente. `avisado` é o resultado real do
+                // envio: saiu = true; não saiu (ou entrega sem envio antes) =
+                // false com o porquê — a linha não mente. Os campos coletados
+                // vão como `camposColetados` — o handoff os grava NA PASSAGEM
+                // (lida sob visão de conversa), nunca no corpo da Central.
+                // `idempotenciaDaPassagem` = a mensagem reivindicada: retry do
+                // mesmo turno lê o recibo e não duplica a linha; mensagem nova é
+                // fato novo e grava.
                 reason: 'report_readiness',
                 conversationSummary: o.resumo,
                 inboxTitle: o.titulo,
                 camposColetados: o.detalhes,
                 idempotenciaDaPassagem: o.chave,
+                avisoAoLead:
+                  mensagemDoEstadoSaiu === true
+                    ? { avisado: true }
+                    : {
+                        avisado: false,
+                        porque: 'a mensagem de estado do fluxo não saiu pelo canal',
+                      },
                 log: runLog,
               },
             );
