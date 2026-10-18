@@ -21,8 +21,11 @@
  *
  * Confiabilidade: claim da mensagem em `conversations.metadata` (retry da
  * mesma mensagem = no-op), teto de envios por turno respeitado (o mesmo
- * MAX_SENDS_PER_TURN do motor), e a entrega para humano é idempotente no
- * motor. PII (nome, datas) vai só para a passagem do atendente — nunca log.
+ * MAX_SENDS_PER_TURN do motor), e a entrega para humano não duplica a LINHA
+ * da passagem: o fluxo passa a mensagem reivindicada como `chave`, e o
+ * handoff grava recibo na mesma transação do insert (retry do turno
+ * interrompido = pula; mensagem nova = fato novo). PII (nome, datas) vai só
+ * para a passagem do atendente — nunca log.
  *
  * Ativação: módulo opcional da instalação `laudos` (desligado por padrão,
  * falha fechada — ver `lib/instalacao/modulos.ts`). Desligado, a função
@@ -72,8 +75,16 @@ export interface FluxoDeLaudoDeps {
    * Entrega para verificação humana. `detalhes` são os campos coletados no
    * turno — o call site os repassa como `camposColetados` do handoff, para
    * irem à PASSAGEM (lida sob visão de conversa), nunca ao corpo do aviso.
+   * `chave` é a MENSAGEM reivindicada (claim de retry): o handoff a guarda
+   * como recibo na MESMA transação do insert, então um retry do mesmo turno
+   * não duplica a linha da passagem.
    */
-  handover: (o: { titulo: string; resumo: string; detalhes: Record<string, string> }) => Promise<void>;
+  handover: (o: {
+    titulo: string;
+    resumo: string;
+    detalhes: Record<string, string>;
+    chave: string;
+  }) => Promise<void>;
 }
 
 export interface ResultadoFluxo {
@@ -176,6 +187,10 @@ export async function executarFluxoDeProntoAtendimento(
       titulo: TITULO_DA_ENTREGA,
       resumo: resumoDaEntrega(proximo, extra),
       detalhes: { ...proximo.detalhes },
+      // A chave de idempotência: a MESAGEM reivindicada. Retry do mesmo turno
+      // (mesma chave) não duplica a linha da passagem; uma mensagem NOVA é um
+      // fato novo e grava — ver `gravarPassagemComRecibo`.
+      chave: proximo.msg,
     });
     limpar = true;
   };

@@ -5,8 +5,9 @@
  * o turno atual reivindicou: o claim (CAS por `msg`) é a trava de retry — a
  * mesma mensagem re-executada não reenvia nem re-entrega para humano, e um
  * turno interrompido (`processando: true`) é re-executado com segurança porque
- * os efeitos são idempotentes (ledger de envio por `(job, seq)` + handoff
- * idempotente no motor).
+ * os efeitos são idempotentes (ledger de envio por `(job, seq)` + recibo da
+ * passagem em `conversations.metadata`: uma linha por tentativa, o "meio
+ * idempotente" do #2885 — ver `gravarPassagemComRecibo`).
  */
 import type { Queryable } from '../../queue/queue';
 import type { Idioma, Servico } from './intent';

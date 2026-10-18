@@ -92,7 +92,12 @@ interface Opcoes {
 function criar(op: Opcoes = {}) {
   const banco = fakeDb(op.estadoInicial ?? null);
   const envios: string[] = [];
-  const handovers: Array<{ titulo: string; resumo: string; detalhes: Record<string, string> }> = [];
+  const handovers: Array<{
+    titulo: string;
+    resumo: string;
+    detalhes: Record<string, string>;
+    chave: string;
+  }> = [];
   const deps: FluxoDeLaudoDeps = {
     db: banco.db,
     log: { info: vi.fn(), warn: vi.fn() },
@@ -157,6 +162,9 @@ describe('patologia: checagem humana, sem status inventado', () => {
     expect(t.envios).toEqual([VERIFICAR_EQUIPE]);
     expect(t.handovers).toHaveLength(1);
     expect(t.handovers[0]?.resumo).toContain('checagem manual');
+    // A chave de idempotência é a MENSAGEM reivindicada deste turno: é ela que
+    // o handoff guarda como recibo (uma linha por tentativa — #2885).
+    expect(t.handovers[0]?.chave).toBe('m1');
     expect(t.envios[0]).not.toMatch(/ready|तैयार|taiyar(?! nahi)/i);
     expect(t.banco.ler()?.etapa).toBe('encerrado');
   });
@@ -244,6 +252,9 @@ describe('biopsy e radiologia: coleta campo a campo até a entrega', () => {
       data_cirurgia: '12/03/2024',
       medico: 'Dr. Sen',
     });
+    // A chave acompanha a mensagem do turno da ENTREGA (m4), não a primeira:
+    // é o escopo exato do recibo — retry de m4 não duplica, m5 seria fato novo.
+    expect(t.handovers[0]?.chave).toBe('m4');
     expect(t.banco.ler()?.etapa).toBe('encerrado');
   });
 

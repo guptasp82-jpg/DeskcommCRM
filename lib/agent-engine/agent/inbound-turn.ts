@@ -2710,7 +2710,12 @@ async function executarTurnoDoAgente(
             });
             return chain.status !== 'vetoed' && (chain.outcome.kind === 'sent' || chain.outcome.kind === 'already_sent');
           },
-          handover: async (o: { titulo: string; resumo: string; detalhes: Record<string, string> }) => {
+          handover: async (o: {
+            titulo: string;
+            resumo: string;
+            detalhes: Record<string, string>;
+            chave: string;
+          }) => {
             await performHumanHandoff(
               pool,
               { tenantId, leadId, conversationId: input.conversationId },
@@ -2721,11 +2726,14 @@ async function executarTurnoDoAgente(
                 // paciente, e o aviso do emissor é pt/es — duplicaria e viraria
                 // outro idioma. Os campos coletados vão como `camposColetados`
                 // — o handoff os grava NA PASSAGEM (lida sob visão de
-                // conversa), nunca no corpo da Central.
+                // conversa), nunca no corpo da Central. `idempotenciaDaPassagem`
+                // = a mensagem reivindicada: retry do mesmo turno lê o recibo e
+                // não duplica a linha; mensagem nova é fato novo e grava.
                 reason: 'report_readiness',
                 conversationSummary: o.resumo,
                 inboxTitle: o.titulo,
                 camposColetados: o.detalhes,
+                idempotenciaDaPassagem: o.chave,
                 log: runLog,
               },
             );
